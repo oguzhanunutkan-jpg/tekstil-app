@@ -64,13 +64,13 @@ def generate():
             token=hf_token
         )
 
-        result = client.image_to_image(
-            image=io.BytesIO(surf_bytes),
-            model="fal-ai/flux/dev/image-to-image",
-            prompt=prompt,
-            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
-            strength=strength,
-        )
+    result = client.image_to_image(
+    image=surf_bytes,  # bytes olarak veriyoruz
+    model="stabilityai/stable-diffusion-xl-base-1.0",
+    prompt=prompt,
+    negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
+    strength=strength
+)
 
         buf = io.BytesIO()
         result.save(buf, format="JPEG", quality=90)
