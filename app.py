@@ -1,4 +1,4 @@
-import os, base64, io, requests, time
+import os, base64, io, requests, time, json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
@@ -6,13 +6,15 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)
 
-HF_API = "https://router.huggingface.co/hf-inference/models"
+@app.route('/')
+def index():
+    return "DeseniGiydir API calisiyor OK"
 
 def dataurl_to_bytes(dataurl):
-    header, data = dataurl.split(',', 1)
+    _, data = dataurl.split(',', 1)
     return base64.b64decode(data)
 
-def resize_image(img_bytes, max_size=768):
+def resize_image(img_bytes, max_size=512):
     img = Image.open(io.BytesIO(img_bytes))
     if img.mode != 'RGB':
         img = img.convert('RGB')
@@ -24,10 +26,6 @@ def resize_image(img_bytes, max_size=768):
     img.save(buf, format='JPEG', quality=85)
     return buf.getvalue()
 
-@app.route('/')
-def index():
-    return "DeseniGiydir API calisiyor OK"
-
 @app.route('/api/generate', methods=['POST'])
 def generate():
     try:
@@ -35,84 +33,63 @@ def generate():
         hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
         prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
-        strength = float(data.get('strength', 0.6))
-        steps    = int(data.get('steps', 25))
 
         if not hf_token:
             return jsonify({'error': 'Hugging Face token gerekli'}), 400
+        if not surf_url:
+            return jsonify({'error': 'Görsel eksik'}), 400
 
-        surf_bytes = resize_image(dataurl_to_bytes(surf_url), 768)
+        surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
 
         headers = {
             "Authorization": f"Bearer {hf_token}",
-            "Content-Type": "application/json",
-            "X-Wait-For-Model": "true"
         }
 
-        # HF img2img — stable-diffusion-img2img pipeline
-        payload = {
-            "inputs": prompt + ", realistic fabric texture, professional product photography, high quality, sharp focus",
-            "parameters": {
-                "image": base64.b64encode(surf_bytes).decode('utf-8'),
-                "strength": strength,
-                "num_inference_steps": steps,
-                "guidance_scale": 7.5,
-                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark, text"
-            }
+        full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality, sharp focus, detailed"
+
+        # timbrooks/instruct-pix2pix — HF router'da çalışan img2img modeli
+        # multipart/form-data olarak gönder
+        files = {
+            'inputs': ('image.jpg', io.BytesIO(surf_bytes), 'image/jpeg'),
+        }
+        form_data = {
+            'parameters': json.dumps({
+                "prompt": full_prompt,
+                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark, text",
+                "num_inference_steps": 20,
+                "image_guidance_scale": 1.5,
+                "guidance_scale": 7.0,
+            })
         }
 
-        # Önce img2img modeli dene
-        models = [
-            "radames/stable-diffusion-v1-5-img2img",
-            "radames/stable-diffusion-2-1-img2img",
-        ]
+        url = "https://router.huggingface.co/hf-inference/models/timbrooks/instruct-pix2pix"
 
-        result_bytes = None
-        last_error = ""
+        res = requests.post(url, headers=headers, files=files, data=form_data, timeout=90)
 
-        for model in models:
+        # Model yükleniyor
+        if res.status_code == 503:
             try:
-                res = requests.post(
-                    f"{HF_API}/{model}",
-                    json=payload,
-                    headers=headers,
-                    timeout=60
-                )
+                wait = res.json().get('estimated_time', 20)
+            except:
+                wait = 20
+            time.sleep(min(float(wait), 30))
+            res = requests.post(url, headers=headers, files=files, data=form_data, timeout=120)
 
-                if res.status_code == 503:
-                    # Model yükleniyor, bekle
-                    wait = res.json().get('estimated_time', 20)
-                    time.sleep(min(wait, 30))
-                    # Tekrar dene
-                    res = requests.post(
-                        f"{HF_API}/{model}",
-                        json=payload,
-                        headers=headers,
-                        timeout=90
-                    )
+        if res.status_code == 401:
+            return jsonify({'error': 'HF token hatalı. Write yetkili token oluşturun.'}), 401
 
-                if res.status_code == 200 and res.headers.get('content-type', '').startswith('image'):
-                    result_bytes = res.content
-                    break
-                elif res.status_code == 401:
-                    return jsonify({'error': 'HF token hatalı. Write yetkili token oluşturun.'}), 401
-                else:
-                    try:
-                        last_error = res.json().get('error', f'HTTP {res.status_code}')
-                    except:
-                        last_error = f'HTTP {res.status_code}'
-            except requests.Timeout:
-                last_error = f"{model} zaman aşımı"
-                continue
-            except Exception as e:
-                last_error = str(e)
-                continue
+        if res.status_code == 200 and 'image' in res.headers.get('content-type', ''):
+            img_b64 = base64.b64encode(res.content).decode()
+            return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
 
-        if result_bytes:
-            img_b64 = base64.b64encode(result_bytes).decode()
-            return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
-        else:
-            return jsonify({'error': 'Tüm modeller başarısız: ' + last_error}), 500
+        # Hata detayı
+        try:
+            err = res.json()
+            msg = err.get('error', str(err))
+        except:
+            msg = f"HTTP {res.status_code}: {res.text[:200]}"
+
+        return jsonify({'error': msg}), 500
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
