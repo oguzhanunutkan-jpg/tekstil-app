@@ -7,11 +7,14 @@ from huggingface_hub import InferenceClient
 app = Flask(__name__)
 CORS(app)
 
+# ── Helper Functions ──
 def dataurl_to_bytes(dataurl):
+    """DataURL → bytes"""
     _, data = dataurl.split(',', 1)
     return base64.b64decode(data)
 
 def resize_image(img_bytes, max_size=768):
+    """Resize image for model input"""
     img = Image.open(io.BytesIO(img_bytes))
     if img.mode != "RGB":
         img = img.convert("RGB")
@@ -23,9 +26,10 @@ def resize_image(img_bytes, max_size=768):
     img.save(buf, format="JPEG", quality=90)
     return buf.getvalue()
 
+# ── Routes ──
 @app.route('/')
 def index():
-    return "DeseniGiydir API calisiyor OK"
+    return "DeseniGiydir API çalışıyor ✅"
 
 @app.route('/api/generate', methods=['POST'])
 def generate():
@@ -37,6 +41,7 @@ def generate():
         prompt = data.get('prompt', 'office chair with elegant fabric pattern, realistic fabric texture')
         strength = float(data.get('strength', 0.7))
 
+        # Validasyon
         if not hf_token:
             return jsonify({'error': 'Hugging Face token gerekli'}), 400
         if not surf_url:
@@ -48,17 +53,19 @@ def generate():
         if pat_url:
             prompt += ", upholstery made with the provided fabric pattern"
 
-        client = InferenceClient(token=hf_token)
+        # ── Hugging Face Router Client ──
+        client = InferenceClient(token=hf_token)  # router endpoint otomatik kullanılıyor
 
-        # ── DÜZELTİLMİŞ ──
+        # ── Image-to-Image ──
         result = client.image_to_image(
-            image=surf_bytes,  # direct bytes
+            image=surf_bytes,  # bytes input
             model="stabilityai/stable-diffusion-xl-base-1.0",
             prompt=prompt,
             negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
             strength=strength
         )
 
+        # PIL Image → Base64
         buf = io.BytesIO()
         result.save(buf, format="JPEG", quality=90)
         img_b64 = base64.b64encode(buf.getvalue()).decode()
@@ -68,11 +75,12 @@ def generate():
     except Exception as e:
         err = str(e)
         if "401" in err.lower():
-            return jsonify({'error': 'Token hatalı'}), 401
+            return jsonify({'error': 'Token hatalı. HF tokeninizi kontrol edin.'}), 401
         if "credit" in err.lower():
-            return jsonify({'error': 'Hugging Face kredisi bitti'}), 402
+            return jsonify({'error': 'HF krediniz bitti veya model erişimi yok.'}), 402
         return jsonify({'error': err}), 500
 
+# ── Main ──
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
