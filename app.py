@@ -77,7 +77,7 @@ def generate():
         }
 
         res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview-05-20:generateContent?key={api_key}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key={api_key}",
             json=payload,
             timeout=60
         )
