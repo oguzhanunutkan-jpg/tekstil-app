@@ -1,7 +1,8 @@
-import os, base64, io, requests
+import os, base64, io
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
+from huggingface_hub import InferenceClient
 
 app = Flask(__name__)
 CORS(app)
@@ -33,6 +34,7 @@ def generate():
         hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
         prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
+        strength = float(data.get('strength', 0.7))
 
         if not hf_token:
             return jsonify({'error': 'Hugging Face token gerekli'}), 400
@@ -42,44 +44,35 @@ def generate():
         surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
         full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality"
 
-        headers = {"Authorization": f"Bearer {hf_token}"}
-
-        # Yeni HF router endpoint — multipart olarak gönder
-        response = requests.post(
-            "https://router.huggingface.co/hf-inference/models/timbrooks/instruct-pix2pix/v1/image-to-image",
-            headers=headers,
-            files={"image": ("image.jpg", surf_bytes, "image/jpeg")},
-            data={
-                "prompt": full_prompt,
-                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark",
-                "num_inference_steps": "20",
-                "guidance_scale": "7.5",
-                "image_guidance_scale": "1.5",
-            },
-            timeout=120
+        # fal-ai provider ile image-to-image
+        client = InferenceClient(
+            provider="fal-ai",
+            api_key=hf_token,
         )
 
-        if response.status_code == 401:
-            return jsonify({'error': 'Token hatalı. Write yetkili HF token girin.'}), 401
-        if response.status_code == 503:
-            return jsonify({'error': 'Model yükleniyor, 30 saniye sonra tekrar deneyin.'}), 503
-        if response.status_code == 404:
-            return jsonify({'error': 'Model bulunamadı.'}), 404
+        result = client.image_to_image(
+            image=surf_bytes,
+            prompt=full_prompt,
+            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
+            model="fal-ai/flux/dev/image-to-image",
+            strength=strength,
+        )
 
-        content_type = response.headers.get('content-type', '')
-        if response.status_code == 200 and 'image' in content_type:
-            img_b64 = base64.b64encode(response.content).decode()
-            return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
+        if not isinstance(result, Image.Image):
+            raise ValueError("Beklenmedik yanıt tipi")
 
-        # Hata detayı göster
-        try:
-            msg = response.json().get('error', response.text[:300])
-        except:
-            msg = response.text[:300]
-        return jsonify({'error': f'HTTP {response.status_code}: {msg}'}), 500
+        buf = io.BytesIO()
+        result.save(buf, format='JPEG', quality=90)
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+        return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        err = str(e)
+        if '401' in err or 'unauthorized' in err.lower():
+            return jsonify({'error': 'Token hatalı.'}), 401
+        if '402' in err or 'credit' in err.lower() or 'billing' in err.lower():
+            return jsonify({'error': 'fal-ai krediniz bitti.'}), 402
+        return jsonify({'error': err}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
