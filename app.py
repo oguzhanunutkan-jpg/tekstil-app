@@ -63,8 +63,8 @@ def generate():
 
         # Önce img2img modeli dene
         models = [
-            "runwayml/stable-diffusion-v1-5",
-            "stabilityai/stable-diffusion-2-1",
+            "radames/stable-diffusion-v1-5-img2img",
+            "radames/stable-diffusion-2-1-img2img",
         ]
 
         result_bytes = None
