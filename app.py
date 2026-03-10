@@ -1,8 +1,7 @@
-import os, base64, io
+import os, base64, io, requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
-from huggingface_hub import InferenceClient
 
 app = Flask(__name__)
 CORS(app)
@@ -31,46 +30,82 @@ def index():
 def generate():
     try:
         data     = request.json
-        hf_token = data.get('api_key', '').strip()
+        api_key  = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
-        prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
+        pat_url  = data.get('pat_image')
+        prompt   = data.get('prompt', 'Apply an elegant fabric pattern to the upholstery')
 
-        if not hf_token:
-            return jsonify({'error': 'Hugging Face token gerekli'}), 400
+        if not api_key:
+            return jsonify({'error': 'Gemini API key gerekli'}), 400
         if not surf_url:
-            return jsonify({'error': 'Görsel eksik'}), 400
+            return jsonify({'error': 'Ürün görseli eksik'}), 400
 
-        full_prompt = prompt + ", realistic fabric texture, professional studio product photography, high quality, sharp focus, detailed upholstery"
+        surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
+        surf_b64   = base64.b64encode(surf_bytes).decode()
 
-        # fal-ai text-to-image — FLUX modeli
-        client = InferenceClient(
-            provider="fal-ai",
-            api_key=hf_token,
+        parts = [
+            {
+                "text": f"{prompt}. Keep the exact shape, form and structure of the furniture. Only change the fabric/upholstery texture. Make it look realistic and professional."
+            },
+            {
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": surf_b64
+                }
+            }
+        ]
+
+        # Desen görseli de varsa ekle
+        if pat_url:
+            pat_bytes = resize_image(dataurl_to_bytes(pat_url), 256)
+            pat_b64   = base64.b64encode(pat_bytes).decode()
+            parts.append({
+                "text": "Use this pattern for the fabric:"
+            })
+            parts.append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": pat_b64
+                }
+            })
+
+        payload = {
+            "contents": [{"parts": parts}],
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"]
+            }
+        }
+
+        res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key={api_key}",
+            json=payload,
+            timeout=60
         )
 
-        result = client.text_to_image(
-            prompt=full_prompt,
-            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark, text",
-            model="black-forest-labs/FLUX.1-dev",
-            width=768,
-            height=768,
-        )
+        if res.status_code == 400:
+            return jsonify({'error': 'API key hatalı veya istek geçersiz.'}), 400
+        if res.status_code == 403:
+            return jsonify({'error': 'API key yetkisiz. Google AI Studio\'dan alın.'}), 403
+        if res.status_code != 200:
+            try:
+                msg = res.json().get('error', {}).get('message', res.text[:200])
+            except:
+                msg = res.text[:200]
+            return jsonify({'error': f'HTTP {res.status_code}: {msg}'}), 500
 
-        if not isinstance(result, Image.Image):
-            raise ValueError("Beklenmedik yanıt tipi")
+        # Yanıttan görsel çıkar
+        candidates = res.json().get('candidates', [])
+        for candidate in candidates:
+            for part in candidate.get('content', {}).get('parts', []):
+                if 'inlineData' in part:
+                    img_data = part['inlineData']['data']
+                    mime     = part['inlineData'].get('mimeType', 'image/png')
+                    return jsonify({'success': True, 'image': f'data:{mime};base64,{img_data}'})
 
-        buf = io.BytesIO()
-        result.save(buf, format='JPEG', quality=90)
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
-        return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
+        return jsonify({'error': 'Görsel üretilemedi. Prompt değiştirip tekrar deneyin.'}), 500
 
     except Exception as e:
-        err = str(e)
-        if '401' in err or 'unauthorized' in err.lower():
-            return jsonify({'error': 'Token hatalı.'}), 401
-        if '402' in err or 'credit' in err.lower() or 'billing' in err.lower():
-            return jsonify({'error': 'fal-ai krediniz bitti.'}), 402
-        return jsonify({'error': err}), 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
