@@ -6,7 +6,7 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)
 
-REPLICATE_API = "https://api.replicate.com/v1"
+HF_API = "https://api-inference.huggingface.co/models"
 
 def dataurl_to_bytes(dataurl):
     header, data = dataurl.split(',', 1)
@@ -24,9 +24,6 @@ def resize_image(img_bytes, max_size=768):
     img.save(buf, format='JPEG', quality=85)
     return buf.getvalue()
 
-def to_b64(img_bytes):
-    return "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode()
-
 @app.route('/')
 def index():
     return "DeseniGiydir API calisiyor OK"
@@ -34,69 +31,88 @@ def index():
 @app.route('/api/generate', methods=['POST'])
 def generate():
     try:
-        data = request.json
-        api_key  = data.get('api_key', '').strip()
+        data     = request.json
+        hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
-        pat_url  = data.get('pat_image')
         prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
-        strength = float(data.get('strength', 0.7))
+        strength = float(data.get('strength', 0.6))
+        steps    = int(data.get('steps', 25))
 
-        if not api_key:
-            return jsonify({'error': 'Replicate API key gerekli'}), 400
+        if not hf_token:
+            return jsonify({'error': 'Hugging Face token gerekli'}), 400
 
         surf_bytes = resize_image(dataurl_to_bytes(surf_url), 768)
-        pat_bytes  = resize_image(dataurl_to_bytes(pat_url),  512)
 
         headers = {
-            "Authorization": f"Token {api_key}",
+            "Authorization": f"Bearer {hf_token}",
             "Content-Type": "application/json",
-            "Prefer": "wait"
+            "X-Wait-For-Model": "true"
         }
 
-        # SDXL img2img
-        body = {
-            "version": "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-            "input": {
-                "image": to_b64(surf_bytes),
-                "prompt": prompt + ", realistic fabric texture, professional product photography, high quality",
-                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark",
-                "prompt_strength": strength,
-                "num_inference_steps": 30,
+        # HF img2img — stable-diffusion-img2img pipeline
+        payload = {
+            "inputs": prompt + ", realistic fabric texture, professional product photography, high quality, sharp focus",
+            "parameters": {
+                "image": base64.b64encode(surf_bytes).decode('utf-8'),
+                "strength": strength,
+                "num_inference_steps": steps,
                 "guidance_scale": 7.5,
+                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark, text"
             }
         }
 
-        res = requests.post(f"{REPLICATE_API}/predictions", json=body, headers=headers, timeout=10)
+        # Önce img2img modeli dene
+        models = [
+            "runwayml/stable-diffusion-v1-5",
+            "stabilityai/stable-diffusion-2-1",
+        ]
 
-        if res.status_code == 401:
-            return jsonify({'error': 'API key hatalı'}), 401
-        if res.status_code == 402:
-            return jsonify({'error': 'Replicate krediniz bitti'}), 402
+        result_bytes = None
+        last_error = ""
 
-        pred = res.json()
-        pred_id = pred.get('id')
-        if not pred_id:
-            return jsonify({'error': 'Prediction başlatılamadı: ' + str(pred)}), 500
+        for model in models:
+            try:
+                res = requests.post(
+                    f"{HF_API}/{model}",
+                    json=payload,
+                    headers=headers,
+                    timeout=60
+                )
 
-        # Polling — sonuç gelene kadar bekle
-        for i in range(60):
-            time.sleep(2)
-            poll = requests.get(f"{REPLICATE_API}/predictions/{pred_id}", headers=headers, timeout=10)
-            p = poll.json()
-            status = p.get('status')
-            if status == 'succeeded':
-                output = p.get('output', [])
-                if output:
-                    img_url = output[0] if isinstance(output, list) else output
-                    img_res = requests.get(img_url, timeout=30)
-                    img_b64 = base64.b64encode(img_res.content).decode()
-                    return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
-                return jsonify({'error': 'Çıktı boş'}), 500
-            elif status == 'failed':
-                return jsonify({'error': 'Model hatası: ' + str(p.get('error', ''))}), 500
-            # processing veya starting ise devam et
+                if res.status_code == 503:
+                    # Model yükleniyor, bekle
+                    wait = res.json().get('estimated_time', 20)
+                    time.sleep(min(wait, 30))
+                    # Tekrar dene
+                    res = requests.post(
+                        f"{HF_API}/{model}",
+                        json=payload,
+                        headers=headers,
+                        timeout=90
+                    )
 
-        return jsonify({'error': 'Zaman aşımı — tekrar deneyin'}), 504
+                if res.status_code == 200 and res.headers.get('content-type', '').startswith('image'):
+                    result_bytes = res.content
+                    break
+                elif res.status_code == 401:
+                    return jsonify({'error': 'HF token hatalı. Write yetkili token oluşturun.'}), 401
+                else:
+                    try:
+                        last_error = res.json().get('error', f'HTTP {res.status_code}')
+                    except:
+                        last_error = f'HTTP {res.status_code}'
+            except requests.Timeout:
+                last_error = f"{model} zaman aşımı"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+
+        if result_bytes:
+            img_b64 = base64.b64encode(result_bytes).decode()
+            return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
+        else:
+            return jsonify({'error': 'Tüm modeller başarısız: ' + last_error}), 500
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
