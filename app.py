@@ -47,7 +47,7 @@ def generate():
 
         result = client.image_to_image(
             model="timbrooks/instruct-pix2pix",
-            image=io.BytesIO(surf_bytes),
+            image=surf_bytes,
             prompt=full_prompt,
             negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
         )
