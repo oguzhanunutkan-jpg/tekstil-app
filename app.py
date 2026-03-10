@@ -1,8 +1,7 @@
-import os, base64, io
+import os, base64, io, requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
-from huggingface_hub import InferenceClient
 
 app = Flask(__name__)
 CORS(app)
@@ -43,30 +42,44 @@ def generate():
         surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
         full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality"
 
-        client = InferenceClient(token=hf_token)
+        headers = {"Authorization": f"Bearer {hf_token}"}
 
-        result = client.image_to_image(
-            model="timbrooks/instruct-pix2pix",
-            image=surf_bytes,
-            prompt=full_prompt,
-            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
+        # Yeni HF router endpoint — multipart olarak gönder
+        response = requests.post(
+            "https://router.huggingface.co/hf-inference/models/timbrooks/instruct-pix2pix/v1/image-to-image",
+            headers=headers,
+            files={"image": ("image.jpg", surf_bytes, "image/jpeg")},
+            data={
+                "prompt": full_prompt,
+                "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark",
+                "num_inference_steps": "20",
+                "guidance_scale": "7.5",
+                "image_guidance_scale": "1.5",
+            },
+            timeout=120
         )
 
-        if not isinstance(result, Image.Image):
-            raise ValueError("Beklenmedik yanıt tipi")
+        if response.status_code == 401:
+            return jsonify({'error': 'Token hatalı. Write yetkili HF token girin.'}), 401
+        if response.status_code == 503:
+            return jsonify({'error': 'Model yükleniyor, 30 saniye sonra tekrar deneyin.'}), 503
+        if response.status_code == 404:
+            return jsonify({'error': 'Model bulunamadı.'}), 404
 
-        buf = io.BytesIO()
-        result.save(buf, format='JPEG', quality=90)
-        img_b64 = base64.b64encode(buf.getvalue()).decode()
-        return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
+        content_type = response.headers.get('content-type', '')
+        if response.status_code == 200 and 'image' in content_type:
+            img_b64 = base64.b64encode(response.content).decode()
+            return jsonify({'success': True, 'image': 'data:image/jpeg;base64,' + img_b64})
+
+        # Hata detayı göster
+        try:
+            msg = response.json().get('error', response.text[:300])
+        except:
+            msg = response.text[:300]
+        return jsonify({'error': f'HTTP {response.status_code}: {msg}'}), 500
 
     except Exception as e:
-        err = str(e)
-        if '401' in err or 'unauthorized' in err.lower():
-            return jsonify({'error': 'Token hatalı.'}), 401
-        if '503' in err or 'loading' in err.lower():
-            return jsonify({'error': 'Model yükleniyor, 30 saniye sonra tekrar deneyin.'}), 503
-        return jsonify({'error': err}), 500
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
