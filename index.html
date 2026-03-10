@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeseniGiydır — AI Tekstil Stüdyosu</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#FAF7F2;--dark:#1A1410;--terra:#C4603A;--gold:#D4A853;--sage:#7A8C6E;--panel:#F2EDE6;--border:#DDD5C8;}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--dark);min-height:100vh;}
+header{background:var(--dark);padding:14px 32px;display:flex;align-items:center;justify-content:space-between;}
+.logo{font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--cream);}
+.logo span{color:var(--gold);font-style:italic;}
+.badge{background:var(--terra);color:#fff;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;padding:4px 12px;border-radius:2px;}
+.studio{display:grid;grid-template-columns:320px 1fr;height:calc(100vh - 52px);}
+.left{background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:14px;}
+.right{background:#EDEBE5;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;position:relative;overflow:hidden;}
+.right::before{content:'';position:absolute;inset:0;background:repeating-linear-gradient(45deg,transparent,transparent 20px,rgba(0,0,0,.015) 20px,rgba(0,0,0,.015) 40px);}
+.sec{font-family:'Playfair Display',serif;font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--terra);padding-bottom:5px;border-bottom:1px solid var(--border);}
+.upload-box{border:2px dashed var(--border);border-radius:10px;cursor:pointer;background:#fff;transition:all .2s;min-height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;position:relative;overflow:hidden;}
+.upload-box:hover{border-color:var(--terra);}
+.upload-box.filled{border-style:solid;border-color:var(--sage);}
+.upload-box img.prev{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+.upload-box .ov{position:absolute;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;opacity:0;transition:.2s;}
+.upload-box:hover .ov{opacity:1;}
+.upload-box .ov span{color:#fff;font-size:.75rem;font-weight:600;}
+.upload-box .ico{font-size:1.8rem;}
+.upload-box .lbl{font-size:.75rem;font-weight:600;}
+.upload-box .sub{font-size:.67rem;color:#aaa;}
+.pat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}
+.pb{width:100%;aspect-ratio:1;border-radius:5px;border:2px solid transparent;cursor:pointer;overflow:hidden;transition:all .2s;}
+.pb:hover,.pb.active{border-color:var(--terra);transform:scale(1.05);}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px;}
+.chip{padding:4px 10px;border:1px solid var(--border);border-radius:20px;font-size:.67rem;cursor:pointer;background:#fff;transition:all .2s;}
+.chip:hover,.chip.active{background:var(--terra);color:#fff;border-color:var(--terra);}
+.inp{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;font-size:.74rem;font-family:'DM Sans',sans-serif;color:var(--dark);outline:none;background:#fff;}
+.inp:focus{border-color:var(--terra);}
+.inp-row{display:flex;gap:6px;align-items:center;}
+.inp-row .inp{flex:1;}
+.inp-row button{padding:8px 12px;background:var(--sage);color:#fff;border:none;border-radius:7px;font-size:.7rem;cursor:pointer;white-space:nowrap;}
+.inp-row button:hover{background:#5a7050;}
+.clabel{font-size:.71rem;color:#666;margin-bottom:4px;display:flex;justify-content:space-between;}
+.clabel b{color:var(--terra);}
+input[type=range]{width:100%;-webkit-appearance:none;height:4px;background:var(--border);border-radius:2px;outline:none;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--terra);cursor:pointer;}
+.btn-main{width:100%;padding:13px;background:var(--terra);color:#fff;border:none;border-radius:9px;font-family:'Playfair Display',serif;font-size:.95rem;cursor:pointer;letter-spacing:.05em;transition:all .2s;box-shadow:0 4px 14px rgba(196,96,58,.3);}
+.btn-main:hover:not(:disabled){background:#B0502A;transform:translateY(-1px);}
+.btn-main:disabled{opacity:.4;cursor:not-allowed;}
+.err{background:#FFF0EC;border:1px solid #F4C5B8;border-radius:8px;padding:9px 12px;font-size:.71rem;color:#A0402A;display:none;line-height:1.6;}
+.ok-msg{background:#F0F7EE;border:1px solid #B8D4B4;border-radius:8px;padding:9px 12px;font-size:.71rem;color:#2E6B28;display:none;}
+/* Result */
+.res-wrap{z-index:1;box-shadow:0 20px 60px rgba(0,0,0,.25);border-radius:12px;overflow:hidden;max-width:100%;max-height:calc(100vh - 180px);display:none;}
+.res-wrap img{display:block;max-width:100%;max-height:calc(100vh - 180px);}
+.ph{z-index:1;text-align:center;color:#aaa;}
+.ph .big{font-size:3rem;margin-bottom:10px;}
+.ph .txt{font-size:.82rem;line-height:1.7;}
+.loading-ov{display:none;position:absolute;inset:0;background:rgba(26,20,16,.72);z-index:20;flex-direction:column;align-items:center;justify-content:center;gap:14px;backdrop-filter:blur(5px);}
+.loading-ov.on{display:flex;}
+.spin{width:46px;height:46px;border:4px solid rgba(255,255,255,.2);border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg);}}
+.ltxt{color:#fff;font-size:.82rem;text-align:center;line-height:1.8;}
+.prog{width:230px;height:5px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;}
+.prog-f{height:100%;background:linear-gradient(90deg,var(--gold),var(--terra));border-radius:3px;width:0;transition:width .3s;}
+.btm{position:absolute;bottom:16px;z-index:5;display:flex;gap:8px;}
+.btn-dl{padding:8px 20px;background:rgba(26,20,16,.82);color:var(--gold);border:none;border-radius:20px;font-size:.74rem;cursor:pointer;backdrop-filter:blur(4px);display:none;}
+.btn-dl:hover{background:rgba(26,20,16,.95);}
+.note{font-size:.64rem;color:#aaa;line-height:1.7;}
+.note a{color:var(--terra);text-decoration:none;}
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Deseni<span>Giydır</span> <span style="font-size:.7rem;color:var(--sage);font-family:'DM Sans',sans-serif;font-style:normal">✦ AI</span></div>
+  <div class="badge">Render · Replicate</div>
+</header>
+<div class="studio">
+<div class="left">
+
+  <!-- BACKEND URL -->
+  <div>
+    <div class="sec">⚙️ Backend URL</div>
+    <div class="inp-row" style="margin-top:8px">
+      <input class="inp" id="backendUrl" placeholder="https://tekstil-desen-api.onrender.com" value="">
+      <button onclick="testBackend()">Test Et</button>
+    </div>
+    <div class="ok-msg" id="okMsg">✓ Bağlantı başarılı</div>
+    <div class="err" id="connErr"></div>
+  </div>
+
+  <!-- API KEY -->
+  <div>
+    <div class="sec">🔑 Replicate API Key</div>
+    <input class="inp" type="password" id="apiKey" placeholder="r8_xxxxxxxxxxxxxxxxxxxx" style="margin-top:8px">
+    <div class="note" style="margin-top:5px">
+      <a href="https://replicate.com/account/api-tokens" target="_blank">replicate.com</a> → Sign Up → API Tokens<br>
+      ✅ $5 ücretsiz kredi &nbsp;·&nbsp; ✅ Türkiye'den erişilebilir
+    </div>
+  </div>
+
+  <!-- GÖRSELLER -->
+  <div>
+    <div class="sec">📷 Ürün Fotoğrafı</div>
+    <div class="upload-box" style="margin-top:8px" onclick="document.getElementById('surfIn').click()">
+      <img class="prev" id="surfPrev" style="display:none">
+      <div class="ov"><span>Değiştir</span></div>
+      <div class="ico">🪑</div>
+      <div class="lbl">Koltuk / Elbise / Perde</div>
+      <div class="sub">Desen uygulanacak fotoğraf</div>
+    </div>
+    <input type="file" id="surfIn" accept="image/*" style="display:none" onchange="loadImg(event,'surf')">
+  </div>
+
+  <div>
+    <div class="sec">🎨 Desen Görseli</div>
+    <div class="upload-box" style="margin-top:8px" onclick="document.getElementById('patIn').click()">
+      <img class="prev" id="patPrev" style="display:none">
+      <div class="ov"><span>Değiştir</span></div>
+      <div class="ico">🖼️</div>
+      <div class="lbl">Kumaş / Desen Görseli</div>
+      <div class="sub">Giydirmek istediğiniz desen</div>
+    </div>
+    <input type="file" id="patIn" accept="image/*" style="display:none" onchange="loadImg(event,'pat')">
+    <div class="pat-grid" id="patGrid" style="margin-top:6px"></div>
+  </div>
+
+  <!-- PROMPT -->
+  <div>
+    <div class="sec">✍️ Ürün Tipi</div>
+    <div class="chip-row" id="objChips" style="margin-top:8px">
+      <div class="chip active" onclick="setObj(this,'office chair upholstery')">🪑 Koltuk</div>
+      <div class="chip" onclick="setObj(this,'sofa armchair fabric')">🛋️ Kanepe</div>
+      <div class="chip" onclick="setObj(this,'dress clothing')">👗 Elbise</div>
+      <div class="chip" onclick="setObj(this,'curtain drape')">🪟 Perde</div>
+    </div>
+  </div>
+
+  <!-- STRENGTH -->
+  <div>
+    <div class="clabel">Dönüşüm Gücü <b id="strV">70%</b></div>
+    <input type="range" id="strR" min="30" max="90" value="70" oninput="document.getElementById('strV').textContent=this.value+'%'">
+    <div style="font-size:.63rem;color:#aaa;margin-top:3px">Düşük → orijinale yakın · Yüksek → tam dönüşüm</div>
+  </div>
+
+  <div class="err" id="errBox"></div>
+  <button class="btn-main" id="genBtn" onclick="generate()" disabled>✦ AI ile Giydir</button>
+
+</div>
+
+<!-- RIGHT -->
+<div class="right">
+  <div class="loading-ov" id="loadOv">
+    <div class="spin"></div>
+    <div class="ltxt" id="ltxt">AI işliyor...<br><small style="opacity:.7">30-60 saniye sürebilir</small></div>
+    <div class="prog"><div class="prog-f" id="progF"></div></div>
+  </div>
+  <div class="res-wrap" id="resWrap"><img id="resImg"></div>
+  <div class="ph" id="ph">
+    <div class="big">✨</div>
+    <div class="txt">Sol taraftan görselleri yükleyin<br>ve AI ile gerçekçi desen giydirin</div>
+  </div>
+  <div class="btm">
+    <button class="btn-dl" id="dlBtn" onclick="dlResult()">⬇ İndir</button>
+  </div>
+</div>
+</div>
+
+<script>
+let surfDataUrl=null, patDataUrl=null, resultDataUrl=null;
+let selectedObj='office chair upholstery', progTimer=null;
+
+// ══ PRESETS ══
+function pWave(ctx,s){ctx.fillStyle='#EEF4FB';ctx.fillRect(0,0,s,s);const c=['#4A90D9','#6BB8E8','#2C5F8A'];for(let r=0;r<4;r++){ctx.beginPath();ctx.moveTo(0,(r+.5)*s/4);for(let x=0;x<=s;x+=2)ctx.lineTo(x,(r+.5)*s/4+Math.sin(x/s*Math.PI*2)*s*.07);ctx.lineWidth=s*.04;ctx.strokeStyle=c[r%3];ctx.stroke();}}
+function pPlaid(ctx,s){ctx.fillStyle='#F8F0E8';ctx.fillRect(0,0,s,s);const st=s/4;for(let i=0;i<4;i++){ctx.fillStyle='rgba(100,60,40,.25)';ctx.fillRect(i*st,0,st*.4,s);ctx.fillRect(0,i*st,s,st*.4);}ctx.fillStyle='rgba(200,80,60,.2)';ctx.fillRect(s*.4,0,s*.2,s);ctx.fillRect(0,s*.4,s,s*.2);}
+function pFloral(ctx,s){ctx.fillStyle='#FDF6F0';ctx.fillRect(0,0,s,s);const c=['#E8626A','#F4A261','#D4A8D0','#7AC99F'];for(let i=0;i<4;i++){const x=s/2+Math.cos(i*Math.PI/2)*s*.2,y=s/2+Math.sin(i*Math.PI/2)*s*.2;ctx.beginPath();ctx.arc(x,y,s*.15,0,Math.PI*2);ctx.fillStyle=c[i]+'99';ctx.fill();}ctx.beginPath();ctx.arc(s/2,s/2,s*.1,0,Math.PI*2);ctx.fillStyle='#F4D03F';ctx.fill();}
+function pGeo(ctx,s){ctx.fillStyle='#F0EBE3';ctx.fillRect(0,0,s,s);const st=s/3;for(let r=0;r<3;r++)for(let cv=0;cv<3;cv++){const cx=cv*st+st/2,cy=r*st+st/2;ctx.beginPath();for(let i=0;i<6;i++){const a=i*Math.PI/3-Math.PI/6;ctx.lineTo(cx+Math.cos(a)*st*.4,cy+Math.sin(a)*st*.4);}ctx.closePath();ctx.fillStyle=(r+cv)%2===0?'rgba(180,130,80,.4)':'rgba(100,80,60,.2)';ctx.fill();ctx.strokeStyle='rgba(100,80,60,.5)';ctx.lineWidth=1;ctx.stroke();}}
+function pDots(ctx,s){ctx.fillStyle='#FFF8F5';ctx.fillRect(0,0,s,s);const st=s/5,r=st*.28,c=['#C4603A','#D4A853','#7A8C6E','#9B6B8A','#6B7FAF'];for(let row=0;row<5;row++)for(let col=0;col<5;col++){ctx.beginPath();ctx.arc(col*st+st/2+(row%2?st/2:0),row*st+st/2,r,0,Math.PI*2);ctx.fillStyle=c[(row*5+col)%5];ctx.fill();}}
+function pStripe(ctx,s){ctx.fillStyle='#F8F8F5';ctx.fillRect(0,0,s,s);const c=['#C4603A','#F8F8F5','#D4A853','#F8F8F5','#7A8C6E'],w=s/c.length;c.forEach((v,i)=>{ctx.fillStyle=v;ctx.fillRect(i*w,0,w,s);});}
+function pLeaf(ctx,s){ctx.fillStyle='#F2F7F0';ctx.fillRect(0,0,s,s);const one=(x,y,a,col)=>{ctx.save();ctx.translate(x,y);ctx.rotate(a);ctx.beginPath();ctx.moveTo(0,-s*.2);ctx.bezierCurveTo(s*.12,-s*.1,s*.12,s*.1,0,s*.2);ctx.bezierCurveTo(-s*.12,s*.1,-s*.12,-s*.1,0,-s*.2);ctx.fillStyle=col;ctx.fill();ctx.restore();};one(s*.25,s*.25,.4,'rgba(90,140,80,.6)');one(s*.75,s*.25,-.5,'rgba(60,110,60,.7)');one(s*.5,s*.6,.1,'rgba(110,160,90,.5)');}
+function pChain(ctx,s){ctx.fillStyle='#F5F0EA';ctx.fillRect(0,0,s,s);const st=s/3;for(let r=0;r<3;r++)for(let cv=0;cv<3;cv++){const cx=cv*st+st/2,cy=r*st+st/2;ctx.beginPath();ctx.arc(cx,cy,st*.35,0,Math.PI*2);ctx.lineWidth=st*.1;ctx.strokeStyle='rgba(120,90,60,.6)';ctx.stroke();ctx.beginPath();ctx.arc(cx,cy,st*.18,0,Math.PI*2);ctx.fillStyle='rgba(180,130,80,.4)';ctx.fill();}}
+
+const PATS=[
+  {n:'Dalga',f:pWave},{n:'Ekose',f:pPlaid},{n:'Çiçek',f:pFloral},{n:'Geo',f:pGeo},
+  {n:'Nokta',f:pDots},{n:'Çizgi',f:pStripe},{n:'Yaprak',f:pLeaf},{n:'Zincir',f:pChain}
+];
+function initPresets(){
+  const g=document.getElementById('patGrid');
+  PATS.forEach(p=>{
+    const tc=document.createElement('canvas');tc.width=tc.height=72;p.f(tc.getContext('2d'),72);
+    const btn=document.createElement('button');btn.className='pb';btn.title=p.n;btn.appendChild(tc);
+    btn.onclick=()=>{
+      document.querySelectorAll('.pb').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      const bc=document.createElement('canvas');bc.width=bc.height=512;p.f(bc.getContext('2d'),512);
+      patDataUrl=bc.toDataURL('image/jpeg',0.9);
+      setBoxImg('pat',patDataUrl);
+      checkReady();
+    };
+    g.appendChild(btn);
+  });
+}
+
+function setObj(el,v){
+  document.querySelectorAll('#objChips .chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active'); selectedObj=v;
+}
+
+function loadImg(e,type){
+  const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();
+  r.onload=ev=>{
+    if(type==='surf') surfDataUrl=ev.target.result;
+    else patDataUrl=ev.target.result;
+    setBoxImg(type,ev.target.result);
+    if(type==='pat') document.querySelectorAll('.pb').forEach(b=>b.classList.remove('active'));
+    checkReady();
+  };
+  r.readAsDataURL(f);
+}
+
+function setBoxImg(type,src){
+  const box=document.querySelector(type==='surf'?'#surfPrev':'#patPrev').parentElement;
+  const img=document.getElementById(type+'Prev');
+  img.src=src; img.style.display='block';
+  box.classList.add('filled');
+  box.querySelectorAll('.ico,.lbl,.sub').forEach(el=>el.style.display='none');
+}
+
+function checkReady(){
+  document.getElementById('genBtn').disabled=!(surfDataUrl&&patDataUrl);
+}
+
+// ══ BACKEND TEST ══
+async function testBackend(){
+  const url=getBackendUrl();
+  if(!url){showConnErr('URL girin');return;}
+  try{
+    const r=await fetch(url+'/');
+    const txt=await r.text();
+    document.getElementById('connErr').style.display='none';
+    const ok=document.getElementById('okMsg');
+    ok.textContent='✓ Bağlantı başarılı: '+txt.slice(0,40);
+    ok.style.display='block';
+  }catch(e){
+    showConnErr('Bağlanamadı: '+e.message);
+  }
+}
+
+function getBackendUrl(){
+  return document.getElementById('backendUrl').value.trim().replace(/\/$/,'');
+}
+
+// ══ GENERATE ══
+async function generate(){
+  const backendUrl=getBackendUrl();
+  if(!backendUrl){showErr('Backend URL gerekli.');return;}
+  const apiKey=document.getElementById('apiKey').value.trim();
+  if(!apiKey){showErr('Replicate API key gerekli.');return;}
+  if(!surfDataUrl||!patDataUrl){showErr('Her iki görseli de yükleyin.');return;}
+
+  hideErr(); showLoad(); startProg(50);
+
+  // Görselleri küçült
+  const surfB64=await compress(surfDataUrl,768,0.8);
+  const patB64=await compress(patDataUrl,512,0.8);
+  const prompt=selectedObj+' with elegant fabric pattern, realistic product photography, high quality, detailed texture';
+
+  try{
+    const res=await fetch(backendUrl+'/api/generate',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        api_key: apiKey,
+        surf_image: 'data:image/jpeg;base64,'+surfB64,
+        pat_image: 'data:image/jpeg;base64,'+patB64,
+        prompt: prompt,
+        strength: parseInt(document.getElementById('strR').value)/100
+      })
+    });
+
+    const j=await res.json();
+    if(!res.ok||j.error) throw new Error(j.error||'Hata: '+res.status);
+    if(!j.image) throw new Error('Sonuç alınamadı');
+
+    resultDataUrl=j.image;
+    document.getElementById('resImg').src=j.image;
+    document.getElementById('resWrap').style.display='block';
+    document.getElementById('ph').style.display='none';
+    document.getElementById('dlBtn').style.display='block';
+    hideLoad();
+
+  }catch(err){
+    hideLoad();
+    showErr('⚠️ '+err.message);
+  }
+}
+
+// ══ HELPERS ══
+function compress(dataUrl,maxPx,q){
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{
+      let w=img.width,h=img.height;
+      if(w>maxPx||h>maxPx){const sc=Math.min(maxPx/w,maxPx/h);w=Math.round(w*sc);h=Math.round(h*sc);}
+      const c=document.createElement('canvas');c.width=w;c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      res(c.toDataURL('image/jpeg',q).split(',')[1]);
+    };
+    img.src=dataUrl;
+  });
+}
+function startProg(sec){
+  const pf=document.getElementById('progF');pf.style.width='0';
+  let el=0;clearInterval(progTimer);
+  progTimer=setInterval(()=>{el+=.5;pf.style.width=Math.min(90,el/sec*100)+'%';},500);
+}
+function showLoad(){document.getElementById('loadOv').classList.add('on');document.getElementById('genBtn').disabled=true;}
+function hideLoad(){
+  clearInterval(progTimer);
+  document.getElementById('progF').style.width='100%';
+  setTimeout(()=>{document.getElementById('loadOv').classList.remove('on');document.getElementById('progF').style.width='0';document.getElementById('genBtn').disabled=false;},400);
+}
+function showErr(m){const b=document.getElementById('errBox');b.innerHTML=m;b.style.display='block';}
+function hideErr(){document.getElementById('errBox').style.display='none';}
+function showConnErr(m){const b=document.getElementById('connErr');b.innerHTML=m;b.style.display='block';}
+function dlResult(){
+  if(!resultDataUrl)return;
+  const a=document.createElement('a');a.download='desen-giydirme.png';a.href=resultDataUrl;a.click();
+}
+initPresets();
+</script>
+</body>
+</html>
