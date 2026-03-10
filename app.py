@@ -1,19 +1,18 @@
-import os, base64, io, requests
+import os, base64, io, requests, time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
-import replicate
 
 app = Flask(__name__)
-CORS(app)  # Tüm originlere izin ver
+CORS(app)
+
+REPLICATE_API = "https://api.replicate.com/v1"
 
 def dataurl_to_bytes(dataurl):
-    """Base64 data URL'yi bytes'a çevir"""
     header, data = dataurl.split(',', 1)
     return base64.b64decode(data)
 
 def resize_image(img_bytes, max_size=768):
-    """Görseli yeniden boyutlandır"""
     img = Image.open(io.BytesIO(img_bytes))
     if img.mode != 'RGB':
         img = img.convert('RGB')
@@ -25,78 +24,82 @@ def resize_image(img_bytes, max_size=768):
     img.save(buf, format='JPEG', quality=85)
     return buf.getvalue()
 
+def to_b64(img_bytes):
+    return "data:image/jpeg;base64," + base64.b64encode(img_bytes).decode()
+
 @app.route('/')
 def index():
-    return "DeseniGiydır API çalışıyor ✓"
+    return "DeseniGiydir API calisiyor OK"
 
 @app.route('/api/generate', methods=['POST'])
 def generate():
     try:
         data = request.json
-        api_key = data.get('api_key', '').strip()
-        surf_dataurl = data.get('surf_image')
-        pat_dataurl = data.get('pat_image')
-        prompt = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
+        api_key  = data.get('api_key', '').strip()
+        surf_url = data.get('surf_image')
+        pat_url  = data.get('pat_image')
+        prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
         strength = float(data.get('strength', 0.7))
 
         if not api_key:
             return jsonify({'error': 'Replicate API key gerekli'}), 400
-        if not surf_dataurl or not pat_dataurl:
-            return jsonify({'error': 'Görseller eksik'}), 400
 
-        # Görselleri boyutlandır
-        surf_bytes = resize_image(dataurl_to_bytes(surf_dataurl), 768)
-        pat_bytes  = resize_image(dataurl_to_bytes(pat_dataurl), 512)
+        surf_bytes = resize_image(dataurl_to_bytes(surf_url), 768)
+        pat_bytes  = resize_image(dataurl_to_bytes(pat_url),  512)
 
-        # Replicate client
-        client = replicate.Client(api_token=api_key)
+        headers = {
+            "Authorization": f"Token {api_key}",
+            "Content-Type": "application/json",
+            "Prefer": "wait"
+        }
 
-        # SDXL img2img modeli
-        output = client.run(
-            "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
-            input={
-                "image": io.BytesIO(surf_bytes),
-                "prompt": prompt + ", realistic fabric texture, professional product photography, high quality, detailed",
+        # SDXL img2img
+        body = {
+            "version": "39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
+            "input": {
+                "image": to_b64(surf_bytes),
+                "prompt": prompt + ", realistic fabric texture, professional product photography, high quality",
                 "negative_prompt": "blurry, low quality, distorted, deformed, cartoon, watermark",
                 "prompt_strength": strength,
                 "num_inference_steps": 30,
                 "guidance_scale": 7.5,
-                "scheduler": "K_EULER",
             }
-        )
+        }
 
-        # Sonuç URL'si
-        if output and len(output) > 0:
-            result_url = output[0] if isinstance(output[0], str) else str(output[0])
-            # URL'den base64'e çevir (CORS sorununu önlemek için)
-            img_resp = requests.get(result_url, timeout=30)
-            img_b64 = base64.b64encode(img_resp.content).decode('utf-8')
-            return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
-        else:
-            return jsonify({'error': 'Sonuç alınamadı'}), 500
+        res = requests.post(f"{REPLICATE_API}/predictions", json=body, headers=headers, timeout=10)
 
-    except replicate.exceptions.ReplicateError as e:
-        msg = str(e)
-        if '401' in msg or 'Unauthenticated' in msg:
-            return jsonify({'error': 'API key hatalı veya geçersiz'}), 401
-        if '402' in msg or 'payment' in msg.lower():
+        if res.status_code == 401:
+            return jsonify({'error': 'API key hatalı'}), 401
+        if res.status_code == 402:
             return jsonify({'error': 'Replicate krediniz bitti'}), 402
-        return jsonify({'error': 'Replicate hatası: ' + msg}), 500
+
+        pred = res.json()
+        pred_id = pred.get('id')
+        if not pred_id:
+            return jsonify({'error': 'Prediction başlatılamadı: ' + str(pred)}), 500
+
+        # Polling — sonuç gelene kadar bekle
+        for i in range(60):
+            time.sleep(2)
+            poll = requests.get(f"{REPLICATE_API}/predictions/{pred_id}", headers=headers, timeout=10)
+            p = poll.json()
+            status = p.get('status')
+            if status == 'succeeded':
+                output = p.get('output', [])
+                if output:
+                    img_url = output[0] if isinstance(output, list) else output
+                    img_res = requests.get(img_url, timeout=30)
+                    img_b64 = base64.b64encode(img_res.content).decode()
+                    return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
+                return jsonify({'error': 'Çıktı boş'}), 500
+            elif status == 'failed':
+                return jsonify({'error': 'Model hatası: ' + str(p.get('error', ''))}), 500
+            # processing veya starting ise devam et
+
+        return jsonify({'error': 'Zaman aşımı — tekrar deneyin'}), 504
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/api/test', methods=['POST'])
-def test_key():
-    """API key'i test et"""
-    try:
-        data = request.json
-        api_key = data.get('api_key', '').strip()
-        client = replicate.Client(api_token=api_key)
-        # Basit bir model listesi çek
-        account = client.models.get("stability-ai/sdxl")
-        return jsonify({'success': True, 'message': 'API key geçerli ✓'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 401
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
