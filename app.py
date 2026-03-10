@@ -30,79 +30,67 @@ def index():
 def generate():
     try:
         data     = request.json
-        api_key  = data.get('api_key', '').strip()
+        hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
-        pat_url  = data.get('pat_image')
-        prompt   = data.get('prompt', 'Apply an elegant fabric pattern to the upholstery')
+        prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
+        strength = float(data.get('strength', 0.7))
 
-        if not api_key:
-            return jsonify({'error': 'Gemini API key gerekli'}), 400
         if not surf_url:
-            return jsonify({'error': 'Ürün görseli eksik'}), 400
+            return jsonify({'error': 'Görsel eksik'}), 400
 
         surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
-        surf_b64   = base64.b64encode(surf_bytes).decode()
 
-        parts = [
-            {
-                "text": f"{prompt}. Keep the exact shape, form and structure of the furniture. Only change the fabric/upholstery texture. Make it look realistic and professional."
-            },
-            {
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": surf_b64
-                }
-            }
-        ]
+        # Görseli geçici olarak kaydet ve URL oluştur
+        img_b64 = base64.b64encode(surf_bytes).decode()
+        
+        full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality"
 
-        # Desen görseli de varsa ekle
-        if pat_url:
-            pat_bytes = resize_image(dataurl_to_bytes(pat_url), 256)
-            pat_b64   = base64.b64encode(pat_bytes).decode()
-            parts.append({
-                "text": "Use this pattern for the fabric:"
-            })
-            parts.append({
-                "inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": pat_b64
-                }
-            })
+        headers = {}
+        if hf_token:
+            headers["Authorization"] = f"Bearer {hf_token}"
 
+        # fffiloni/stable-diffusion-img2img Gradio API
         payload = {
-            "contents": [{"parts": parts}],
-            "generationConfig": {
-                "responseModalities": ["TEXT", "IMAGE"]
-            }
+            "data": [
+                f"data:image/jpeg;base64,{img_b64}",  # image
+                full_prompt,                            # prompt
+                "blurry, low quality, distorted, deformed, cartoon, watermark",  # negative
+                8,   # steps
+                strength,  # strength
+                7.5  # guidance scale
+            ]
         }
 
         res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key={api_key}",
+            "https://fffiloni-stable-diffusion-img2img.hf.space/run/predict",
             json=payload,
-            timeout=60
+            headers=headers,
+            timeout=120
         )
 
-        if res.status_code == 400:
-            return jsonify({'error': 'API key hatalı veya istek geçersiz.'}), 400
-        if res.status_code == 403:
-            return jsonify({'error': 'API key yetkisiz. Google AI Studio\'dan alın.'}), 403
         if res.status_code != 200:
             try:
-                msg = res.json().get('error', {}).get('message', res.text[:200])
+                msg = res.json()
             except:
-                msg = res.text[:200]
+                msg = res.text[:300]
             return jsonify({'error': f'HTTP {res.status_code}: {msg}'}), 500
 
-        # Yanıttan görsel çıkar
-        candidates = res.json().get('candidates', [])
-        for candidate in candidates:
-            for part in candidate.get('content', {}).get('parts', []):
-                if 'inlineData' in part:
-                    img_data = part['inlineData']['data']
-                    mime     = part['inlineData'].get('mimeType', 'image/png')
-                    return jsonify({'success': True, 'image': f'data:{mime};base64,{img_data}'})
+        result = res.json()
+        output_data = result.get('data', [])
+        
+        if output_data and len(output_data) > 0:
+            img_data = output_data[0]
+            if isinstance(img_data, str) and img_data.startswith('data:'):
+                return jsonify({'success': True, 'image': img_data})
+            elif isinstance(img_data, dict) and 'url' in img_data:
+                img_url = img_data['url']
+                if img_url.startswith('/'):
+                    img_url = 'https://fffiloni-stable-diffusion-img2img.hf.space' + img_url
+                img_res = requests.get(img_url, timeout=30)
+                img_b64_out = base64.b64encode(img_res.content).decode()
+                return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64_out})
 
-        return jsonify({'error': 'Görsel üretilemedi. Prompt değiştirip tekrar deneyin.'}), 500
+        return jsonify({'error': 'Sonuç alınamadı: ' + str(result)[:200]}), 500
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
