@@ -34,28 +34,26 @@ def generate():
         hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
         prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
-        strength = float(data.get('strength', 0.7))
 
         if not hf_token:
             return jsonify({'error': 'Hugging Face token gerekli'}), 400
         if not surf_url:
             return jsonify({'error': 'Görsel eksik'}), 400
 
-        surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
-        full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality"
+        full_prompt = prompt + ", realistic fabric texture, professional studio product photography, high quality, sharp focus, detailed upholstery"
 
-        # fal-ai provider ile image-to-image
+        # fal-ai text-to-image — FLUX modeli
         client = InferenceClient(
             provider="fal-ai",
             api_key=hf_token,
         )
 
-        result = client.image_to_image(
-            image=surf_bytes,
+        result = client.text_to_image(
             prompt=full_prompt,
-            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark",
-            model="fal-ai/flux/dev/image-to-image",
-            strength=strength,
+            negative_prompt="blurry, low quality, distorted, deformed, cartoon, watermark, text",
+            model="black-forest-labs/FLUX.1-dev",
+            width=768,
+            height=768,
         )
 
         if not isinstance(result, Image.Image):
