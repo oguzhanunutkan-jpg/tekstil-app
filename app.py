@@ -6,7 +6,7 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)
 
-HF_API = "https://api-inference.huggingface.co/models"
+HF_API = "https://router.huggingface.co/hf-inference/models"
 
 def dataurl_to_bytes(dataurl):
     header, data = dataurl.split(',', 1)
