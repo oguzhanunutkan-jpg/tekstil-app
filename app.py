@@ -62,7 +62,7 @@ def generate():
         }
 
         res = requests.post(
-            "https://fffiloni-stable-diffusion-img2img.hf.space/run/predict",
+            "https://fffiloni-stable-diffusion-img2img.hf.space/gradio_api/predict",
             json=payload,
             headers=headers,
             timeout=120
