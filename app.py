@@ -41,7 +41,7 @@ def get_fabric_mask(img):
         pass
 
     # Alt %20'yi kaldır — ayaklar + gölge genellikle altta
-    cutoff = int(h * 0.68)
+    cutoff = int(h * 0.82)
     fg_mask[cutoff:, :] = 0
 
     # Morfoloji
