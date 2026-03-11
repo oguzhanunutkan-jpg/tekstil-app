@@ -1,7 +1,8 @@
-import os, base64, io, requests
+import os, base64, io, tempfile
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
+from gradio_client import Client, handle_file
 
 app = Flask(__name__)
 CORS(app)
@@ -30,7 +31,6 @@ def index():
 def generate():
     try:
         data     = request.json
-        hf_token = data.get('api_key', '').strip()
         surf_url = data.get('surf_image')
         prompt   = data.get('prompt', 'office chair with elegant fabric pattern, realistic product photo')
         strength = float(data.get('strength', 0.7))
@@ -39,58 +39,36 @@ def generate():
             return jsonify({'error': 'Görsel eksik'}), 400
 
         surf_bytes = resize_image(dataurl_to_bytes(surf_url), 512)
-
-        # Görseli geçici olarak kaydet ve URL oluştur
-        img_b64 = base64.b64encode(surf_bytes).decode()
-        
         full_prompt = prompt + ", realistic fabric texture, professional product photography, high quality"
 
-        headers = {}
-        if hf_token:
-            headers["Authorization"] = f"Bearer {hf_token}"
+        # Geçici dosyaya yaz
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+            tmp.write(surf_bytes)
+            tmp_path = tmp.name
 
-        # fffiloni/stable-diffusion-img2img Gradio API
-        payload = {
-            "data": [
-                f"data:image/jpeg;base64,{img_b64}",  # image
-                full_prompt,                            # prompt
-                "blurry, low quality, distorted, deformed, cartoon, watermark",  # negative
-                8,   # steps
-                strength,  # strength
-                7.5  # guidance scale
-            ]
-        }
-
-        res = requests.post(
-            "https://fffiloni-stable-diffusion-img2img.hf.space/gradio_api/run/predict",
-            json=payload,
-            headers=headers,
-            timeout=120
+        # Gradio Client — endpoint otomatik bulur
+        client = Client("nightfury/StableDiffusion.Img2Img-Gradio")
+        result = client.predict(
+            handle_file(tmp_path),  # image
+            full_prompt,            # prompt
+            "blurry, low quality, distorted, cartoon, watermark",  # negative
+            20,                     # steps
+            strength,               # strength
+            7.5,                    # guidance scale
+            api_name="/predict"
         )
 
-        if res.status_code != 200:
-            try:
-                msg = res.json()
-            except:
-                msg = res.text[:300]
-            return jsonify({'error': f'HTTP {res.status_code}: {msg}'}), 500
+        # Sonuç dosya yolu
+        if isinstance(result, str) and os.path.exists(result):
+            with open(result, 'rb') as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
+        elif isinstance(result, dict) and 'path' in result:
+            with open(result['path'], 'rb') as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+            return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64})
 
-        result = res.json()
-        output_data = result.get('data', [])
-        
-        if output_data and len(output_data) > 0:
-            img_data = output_data[0]
-            if isinstance(img_data, str) and img_data.startswith('data:'):
-                return jsonify({'success': True, 'image': img_data})
-            elif isinstance(img_data, dict) and 'url' in img_data:
-                img_url = img_data['url']
-                if img_url.startswith('/'):
-                    img_url = 'https://fffiloni-stable-diffusion-img2img.hf.space' + img_url
-                img_res = requests.get(img_url, timeout=30)
-                img_b64_out = base64.b64encode(img_res.content).decode()
-                return jsonify({'success': True, 'image': 'data:image/png;base64,' + img_b64_out})
-
-        return jsonify({'error': 'Sonuç alınamadı: ' + str(result)[:200]}), 500
+        return jsonify({'error': 'Beklenmedik sonuç: ' + str(result)[:200]}), 500
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
