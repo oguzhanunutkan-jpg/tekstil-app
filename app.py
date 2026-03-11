@@ -21,47 +21,46 @@ def cv2_to_dataurl(img):
 
 def get_fabric_mask(img):
     h, w = img.shape[:2]
-    
-    # 1. Arka plan tespiti — açık renkli (beyaz/gri) alanları çıkar
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    
-    # Beyaz/açık arka plan maskesi
-    _, bg_mask = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY)
+
+    # Arka plan: çok açık piksel (beyaz/gri arka plan + gölge)
+    _, bg_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
     fg_mask = cv2.bitwise_not(bg_mask)
-    
-    # 2. GrabCut ile daha iyi ön plan
+
+    # Çok koyu piksel: ayaklar (siyah/koyu ahşap)
+    _, dark_mask = cv2.threshold(gray, 55, 255, cv2.THRESH_BINARY)
+    fg_mask = cv2.bitwise_and(fg_mask, dark_mask)
+
+    # GrabCut
     gc_mask = np.zeros((h, w), np.uint8)
     bgd = np.zeros((1, 65), np.float64)
     fgd = np.zeros((1, 65), np.float64)
-    rect = (w//8, h//8, w*6//8, h*6//8)
+    rect = (w//8, h//10, w*6//8, h*7//10)  # alt kısımı dışarıda bırak
     try:
         cv2.grabCut(img, gc_mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
         gc_fg = np.where((gc_mask==1)|(gc_mask==3), 255, 0).astype(np.uint8)
+        fg_mask = cv2.bitwise_and(fg_mask, gc_fg)
     except:
-        gc_fg = fg_mask.copy()
+        pass
 
-    # 3. İkisini birleştir
-    combined = cv2.bitwise_and(fg_mask, gc_fg)
+    # Alt %20'yi kaldır — ayaklar + gölge genellikle altta
+    cutoff = int(h * 0.78)
+    fg_mask[cutoff:, :] = 0
 
-    # 4. Koyu pikselleri çıkar (ayaklar genellikle çok koyu)
-    _, dark_mask = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)
-    combined = cv2.bitwise_and(combined, dark_mask)
-
-    # 5. Morfoloji — boşlukları doldur
+    # Morfoloji
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-    combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, 
-                                cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)))
+    fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_CLOSE, kernel)
+    fg_mask = cv2.morphologyEx(fg_mask, cv2.MORPH_OPEN,
+                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)))
 
-    # 6. En büyük bileşeni al (koltuk gövdesi)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(combined)
+    # En büyük bileşen
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(fg_mask)
     if num_labels > 1:
         largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-        combined = np.where(labels == largest, 255, 0).astype(np.uint8)
+        fg_mask = np.where(labels == largest, 255, 0).astype(np.uint8)
 
-    # 7. Yumuşak kenar
-    combined = cv2.GaussianBlur(combined, (21, 21), 0)
-    return combined
+    fg_mask = cv2.GaussianBlur(fg_mask, (21, 21), 0)
+    return fg_mask
 
 def apply_pattern(product, pattern, strength=0.9):
     h, w = product.shape[:2]
