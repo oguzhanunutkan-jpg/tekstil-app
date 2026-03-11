@@ -27,9 +27,6 @@ def get_fabric_mask(img):
     _, bg_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
     fg_mask = cv2.bitwise_not(bg_mask)
 
-    # Çok koyu piksel: ayaklar (siyah/koyu ahşap)
-    _, dark_mask = cv2.threshold(gray, 55, 255, cv2.THRESH_BINARY)
-    fg_mask = cv2.bitwise_and(fg_mask, dark_mask)
 
     # GrabCut
     gc_mask = np.zeros((h, w), np.uint8)
@@ -44,7 +41,7 @@ def get_fabric_mask(img):
         pass
 
     # Alt %20'yi kaldır — ayaklar + gölge genellikle altta
-    cutoff = int(h * 0.78)
+    cutoff = int(h * 0.68)
     fg_mask[cutoff:, :] = 0
 
     # Morfoloji
@@ -78,10 +75,10 @@ def apply_pattern(product, pattern, strength=0.9):
 
     gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
     gray_mean = gray.mean()
-    gray_norm = np.clip((gray - gray_mean) * 0.5 + 0.5, 0.2, 1.0)
+    gray_norm = np.clip((gray - gray_mean) * 0.4 + 0.65, 0.35, 1.0)
     gray3 = np.stack([gray_norm, gray_norm, gray_norm], axis=2)
 
-    textured = np.clip(pattern_f * gray3 * 1.8, 0, 1)
+    textured = np.clip(pattern_f * gray3 * 2.2, 0, 1)
     result = product_f * (1 - mask3 * strength) + textured * (mask3 * strength)
     return (result * 255).clip(0, 255).astype(np.uint8)
 
