@@ -8,24 +8,18 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)
 
-# -----------------------------
-# Yardımcı Fonksiyonlar
-# -----------------------------
 def dataurl_to_cv2(dataurl):
-    """Data URL → OpenCV BGR format"""
     _, encoded = dataurl.split(",", 1)
     img_bytes = base64.b64decode(encoded)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
 def cv2_to_dataurl(img):
-    """OpenCV BGR → Data URL"""
     _, buffer = cv2.imencode(".png", img)
     b64 = base64.b64encode(buffer).decode()
     return "data:image/png;base64," + b64
 
 def get_foreground_mask(img):
-    """Ürün görselinden maskeyi çıkar"""
     h, w = img.shape[:2]
     mask = np.zeros((h, w), np.uint8)
     bgd = np.zeros((1, 65), np.float64)
@@ -35,51 +29,37 @@ def get_foreground_mask(img):
         cv2.grabCut(img, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
         mask = np.where((mask==1)|(mask==3), 255, 0).astype(np.uint8)
     except:
-        # fallback: merkez dikdörtgen maskesi
         mask = np.zeros((h, w), np.uint8)
-        mh, mw = h*4//6, w*4//6
-        y0, x0 = h//6, w//6
-        mask[y0:y0+mh, x0:x0+mw] = 255
-
-    # Morphology + Blur
+        mask[h//6:h*5//6, w//6:w*5//6] = 255
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     mask = cv2.GaussianBlur(mask, (21, 21), 0)
-    return mask.astype(np.float32) / 255.0  # normalize 0-1
+    return mask
 
-def resize_pattern_to_product(pattern, product):
-    """Pattern’ı ürün boyutuna göre tekrar et veya ölçekle"""
-    ph, pw = pattern.shape[:2]
+def apply_pattern(product, pattern, strength=0.9):
     h, w = product.shape[:2]
-
+    ph, pw = pattern.shape[:2]
     reps_x = int(np.ceil(w / pw))
     reps_y = int(np.ceil(h / ph))
     pattern = np.tile(pattern, (reps_y, reps_x, 1))
-    return pattern[:h, :w]
-
-def apply_pattern(product, pattern, strength=0.9):
-    """Deseni ürüne uygula"""
-    # normalize
+    pattern = pattern[:h, :w]
+    mask = get_foreground_mask(product)
+    mask = mask.astype(np.float32) / 255.0
     product_f = product.astype(np.float32) / 255.0
     pattern_f = pattern.astype(np.float32) / 255.0
-
-    # grayscale çarpanı
-    gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY).astype(np.float32)/255.0
+    gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY)
+    gray = gray.astype(np.float32) / 255.0
     gray = np.stack([gray, gray, gray], axis=2)
+    textured = pattern_f * gray * 1.4
+    textured = np.clip(textured, 0, 1)
+    result = product_f.copy()
+    for c in range(3):
+        result[:,:,c] = (
+            product_f[:,:,c] * (1 - mask * strength) +
+            textured[:,:,c] * (mask * strength)
+        )
+    return (result * 255).astype(np.uint8)
 
-    # pattern * grayscale
-    textured = np.clip(pattern_f * gray * 1.4, 0, 1)
-
-    # mask
-    mask = get_foreground_mask(product)
-
-    # blend
-    result = product_f*(1 - mask*strength) + textured*(mask*strength)
-    return (result*255).astype(np.uint8)
-
-# -----------------------------
-# Flask Routes
-# -----------------------------
 @app.route("/")
 def home():
     return "Desen Giydirme API OK"
@@ -87,29 +67,20 @@ def home():
 @app.route("/api/generate", methods=["POST"])
 def generate():
     try:
-        data = request.json
+        data     = request.json
         surf_url = data.get("surf_image") or data.get("product")
         pat_url  = data.get("pat_image") or data.get("pattern")
         strength = float(data.get("strength", 0.9))
-
         if not surf_url:
             return jsonify({"error": "Ürün görseli eksik"}), 400
         if not pat_url:
             return jsonify({"error": "Desen görseli eksik"}), 400
-
         product = dataurl_to_cv2(surf_url)
         pattern = dataurl_to_cv2(pat_url)
-
-        # max boyut sınırı
         h, w = product.shape[:2]
         if max(h, w) > 1024:
             ratio = 1024 / max(h, w)
             product = cv2.resize(product, (int(w*ratio), int(h*ratio)))
-            pattern = cv2.resize(pattern, (int(pattern.shape[1]*ratio), int(pattern.shape[0]*ratio)))
-
-        # pattern ürüne göre ölçeklenir
-        pattern = resize_pattern_to_product(pattern, product)
-
         result = apply_pattern(product, pattern, strength)
         return jsonify({"success": True, "image": cv2_to_dataurl(result)})
     except Exception as e:
@@ -119,7 +90,6 @@ def generate():
 def dress():
     return generate()
 
-# -----------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
