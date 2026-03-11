@@ -8,120 +8,78 @@ from PIL import Image
 app = Flask(__name__)
 CORS(app)
 
+# -----------------------------
+# Yardımcı Fonksiyonlar
+# -----------------------------
 def dataurl_to_cv2(dataurl):
+    """Data URL → OpenCV BGR format"""
     _, encoded = dataurl.split(",", 1)
     img_bytes = base64.b64decode(encoded)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
 def cv2_to_dataurl(img):
+    """OpenCV BGR → Data URL"""
     _, buffer = cv2.imencode(".png", img)
     b64 = base64.b64encode(buffer).decode()
     return "data:image/png;base64," + b64
 
-def tile_pattern(pattern, w, h):
-    ph, pw = pattern.shape[:2]
-    reps_x = int(np.ceil(w / pw))
-    reps_y = int(np.ceil(h / ph))
-    tiled = np.tile(pattern, (reps_y, reps_x, 1))
-    return tiled[:h, :w]
-
-def get_sofa_mask(img):
-    """Koltuk kumaş bölgesini tespit et"""
+def get_foreground_mask(img):
+    """Ürün görselinden maskeyi çıkar"""
     h, w = img.shape[:2]
-    
-    # 1. GrabCut ile ön plan al
-    mask_gc = np.zeros((h, w), np.uint8)
+    mask = np.zeros((h, w), np.uint8)
     bgd = np.zeros((1, 65), np.float64)
     fgd = np.zeros((1, 65), np.float64)
-    # Dikdörtgeni daralt — kenar bölgeleri arka plan
-    rect = (w//10, h//10, w*8//10, h*8//10)
+    rect = (w//8, h//8, w*6//8, h*6//8)
     try:
-        cv2.grabCut(img, mask_gc, rect, bgd, fgd, 8, cv2.GC_INIT_WITH_RECT)
-        fg = np.where((mask_gc==1)|(mask_gc==3), 255, 0).astype(np.uint8)
+        cv2.grabCut(img, mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+        mask = np.where((mask==1)|(mask==3), 255, 0).astype(np.uint8)
     except:
-        fg = np.zeros((h,w), np.uint8)
-        fg[h//8:h*7//8, w//8:w*7//8] = 255
+        # fallback: merkez dikdörtgen maskesi
+        mask = np.zeros((h, w), np.uint8)
+        mh, mw = h*4//6, w*4//6
+        y0, x0 = h//6, w//6
+        mask[y0:y0+mh, x0:x0+mw] = 255
 
-    # 2. Renk bazlı filtre — koltuk rengi arka plandan farklı
-    # Koltuk merkezinin rengini al
-    cy, cx = h//2, w//2
-    center_color = img[cy-20:cy+20, cx-20:cx+20].mean(axis=(0,1))
-    
-    # HSV'ye çevir
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    center_hsv = cv2.cvtColor(
-        np.uint8([[center_color]]), cv2.COLOR_BGR2HSV
-    )[0][0]
-    
-    # Merkez rengine yakın pikselleri bul
-    h_range = 25
-    s_range = 60
-    v_range = 80
-    lower = np.array([
-        max(0,  int(center_hsv[0])-h_range),
-        max(0,  int(center_hsv[1])-s_range),
-        max(0,  int(center_hsv[2])-v_range)
-    ])
-    upper = np.array([
-        min(180, int(center_hsv[0])+h_range),
-        min(255, int(center_hsv[1])+s_range),
-        min(255, int(center_hsv[2])+v_range)
-    ])
-    color_mask = cv2.inRange(hsv, lower, upper)
-    
-    # GrabCut + renk maskesini birleştir
-    combined = cv2.bitwise_and(fg, color_mask)
-    
-    # Morfoloji — boşlukları doldur
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (20, 20))
-    combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
-    combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5)))
-    
-    # En büyük bileşeni al (koltuk gövdesi)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(combined)
-    if num_labels > 1:
-        largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-        combined = np.where(labels == largest, 255, 0).astype(np.uint8)
-    
-    # Yumuşak kenar
-    combined = cv2.GaussianBlur(combined, (25, 25), 0)
-    return combined
+    # Morphology + Blur
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    mask = cv2.GaussianBlur(mask, (21, 21), 0)
+    return mask.astype(np.float32) / 255.0  # normalize 0-1
 
-def apply_pattern(product, pattern, strength=0.85):
+def resize_pattern_to_product(pattern, product):
+    """Pattern’ı ürün boyutuna göre tekrar et veya ölçekle"""
+    ph, pw = pattern.shape[:2]
     h, w = product.shape[:2]
-    pattern_tiled = tile_pattern(pattern, w, h)
-    
-    mask = get_sofa_mask(product)
-    mask_norm = mask.astype(np.float32) / 255.0
-    
-    p = product.astype(np.float32) / 255.0
-    t = pattern_tiled.astype(np.float32) / 255.0
-    
-    # Soft light blend — kumaş dokusu gibi görünür
-    soft_light = np.where(
-        t <= 0.5,
-        p - (1 - 2*t) * p * (1-p),
-        p + (2*t - 1) * (np.sqrt(p) - p)
-    )
-    soft_light = np.clip(soft_light, 0, 1)
-    
-    # Multiply ile karıştır
-    multiply = p * t * 1.6
-    multiply = np.clip(multiply, 0, 1)
-    
-    blended = soft_light * 0.6 + multiply * 0.4
-    
-    # Sadece maske bölgesine uygula
-    result = p.copy()
-    for c in range(3):
-        result[:,:,c] = (
-            p[:,:,c] * (1 - mask_norm * strength) +
-            blended[:,:,c] * (mask_norm * strength)
-        )
-    
-    return (result * 255).clip(0,255).astype(np.uint8)
 
+    reps_x = int(np.ceil(w / pw))
+    reps_y = int(np.ceil(h / ph))
+    pattern = np.tile(pattern, (reps_y, reps_x, 1))
+    return pattern[:h, :w]
+
+def apply_pattern(product, pattern, strength=0.9):
+    """Deseni ürüne uygula"""
+    # normalize
+    product_f = product.astype(np.float32) / 255.0
+    pattern_f = pattern.astype(np.float32) / 255.0
+
+    # grayscale çarpanı
+    gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY).astype(np.float32)/255.0
+    gray = np.stack([gray, gray, gray], axis=2)
+
+    # pattern * grayscale
+    textured = np.clip(pattern_f * gray * 1.4, 0, 1)
+
+    # mask
+    mask = get_foreground_mask(product)
+
+    # blend
+    result = product_f*(1 - mask*strength) + textured*(mask*strength)
+    return (result*255).astype(np.uint8)
+
+# -----------------------------
+# Flask Routes
+# -----------------------------
 @app.route("/")
 def home():
     return "Desen Giydirme API OK"
@@ -129,10 +87,10 @@ def home():
 @app.route("/api/generate", methods=["POST"])
 def generate():
     try:
-        data     = request.json
+        data = request.json
         surf_url = data.get("surf_image") or data.get("product")
         pat_url  = data.get("pat_image") or data.get("pattern")
-        strength = float(data.get("strength", 0.85))
+        strength = float(data.get("strength", 0.9))
 
         if not surf_url:
             return jsonify({"error": "Ürün görseli eksik"}), 400
@@ -141,17 +99,19 @@ def generate():
 
         product = dataurl_to_cv2(surf_url)
         pattern = dataurl_to_cv2(pat_url)
-        
-        # Büyük görselleri küçült
-        max_size = 1024
+
+        # max boyut sınırı
         h, w = product.shape[:2]
-        if max(h,w) > max_size:
-            ratio = max_size / max(h,w)
+        if max(h, w) > 1024:
+            ratio = 1024 / max(h, w)
             product = cv2.resize(product, (int(w*ratio), int(h*ratio)))
+            pattern = cv2.resize(pattern, (int(pattern.shape[1]*ratio), int(pattern.shape[0]*ratio)))
+
+        # pattern ürüne göre ölçeklenir
+        pattern = resize_pattern_to_product(pattern, product)
 
         result = apply_pattern(product, pattern, strength)
         return jsonify({"success": True, "image": cv2_to_dataurl(result)})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -159,6 +119,7 @@ def generate():
 def dress():
     return generate()
 
+# -----------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
