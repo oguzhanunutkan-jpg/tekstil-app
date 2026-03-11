@@ -4,20 +4,21 @@ import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
+
 app = Flask(__name__)
 CORS(app)
-# -----------------------------
-# Yardımcı Fonksiyonlar
-# -----------------------------
+
 def dataurl_to_cv2(dataurl):
     _, encoded = dataurl.split(",", 1)
     img_bytes = base64.b64decode(encoded)
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+
 def cv2_to_dataurl(img):
     _, buffer = cv2.imencode(".png", img)
     b64 = base64.b64encode(buffer).decode()
     return "data:image/png;base64," + b64
+
 def get_foreground_mask(img):
     h, w = img.shape[:2]
     mask = np.zeros((h, w), np.uint8)
@@ -34,6 +35,7 @@ def get_foreground_mask(img):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     mask = cv2.GaussianBlur(mask, (21, 21), 0)
     return mask
+
 def apply_pattern(product, pattern, strength=0.9):
     h, w = product.shape[:2]
     ph, pw = pattern.shape[:2]
@@ -41,23 +43,33 @@ def apply_pattern(product, pattern, strength=0.9):
     reps_y = int(np.ceil(h / ph))
     pattern = np.tile(pattern, (reps_y, reps_x, 1))
     pattern = pattern[:h, :w]
-    # mask ve 3 kanala kopyala
-    mask = get_foreground_mask(product).astype(np.float32)/255.0
+
+    mask = get_foreground_mask(product).astype(np.float32) / 255.0
     mask = np.stack([mask, mask, mask], axis=2)
-    product_f = product.astype(np.float32)/255.0
-    pattern_f = pattern.astype(np.float32)/255.0
-    gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY).astype(np.float32)/255.0
-    gray = np.stack([gray, gray, gray], axis=2)
-    textured = np.clip(pattern_f * gray * 1.4, 0, 1)
-    # blend işlemi
-    result = product_f*(1 - mask*strength) + textured*(mask*strength)
-    return (result*255).astype(np.uint8)
-# -----------------------------
-# Flask Routes
-# -----------------------------
+
+    product_f = product.astype(np.float32) / 255.0
+    pattern_f = pattern.astype(np.float32) / 255.0
+
+    # Koltuğun ışık/gölge haritası — normalize edilmiş
+    gray = cv2.cvtColor(product, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+    # Kontrastı artır — ortalamaya göre normalize et
+    gray_mean = gray.mean()
+    gray_normalized = (gray - gray_mean) * 0.5 + 0.5  # 0.25 - 0.75 arası
+    gray_normalized = np.clip(gray_normalized, 0.2, 1.0)
+    gray3 = np.stack([gray_normalized, gray_normalized, gray_normalized], axis=2)
+
+    # Desen * ışık — ama deseni karartmadan
+    textured = pattern_f * gray3 * 1.8
+    textured = np.clip(textured, 0, 1)
+
+    # Blend
+    result = product_f * (1 - mask * strength) + textured * (mask * strength)
+    return (result * 255).clip(0, 255).astype(np.uint8)
+
 @app.route("/")
 def home():
     return "Desen Giydirme API OK"
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     try:
@@ -79,10 +91,11 @@ def generate():
         return jsonify({"success": True, "image": cv2_to_dataurl(result)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 @app.route("/api/dress", methods=["POST"])
 def dress():
     return generate()
-# -----------------------------
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
